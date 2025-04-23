@@ -1,81 +1,119 @@
-# 一个简单的教学版 Docker
+# VME50 Container - 一个教学目的的简易 Docker
 
-这是一个使用 Go 语言编写的、用于教学目的的简化版 Docker 实现。
-它利用了 Linux 内核的以下特性来创建隔离环境：
+本项目使用 Go 语言编写，旨在演示容器化技术（如 Linux 命名空间、Cgroups 和 Chroot）的基本原理。这是一个简化的实现，主要用于学习和理解容器是如何工作的。
 
-*   **Namespaces**: PID, UTS, Mount 命名空间 (`syscall.CLONE_NEWPID`, `CLONE_NEWUTS`, `CLONE_NEWNS`)
-*   **Cgroups v2**: 用于设置内存 (`memory.max`) 和 CPU (`cpu.max`) 限制。
-*   **Isolated Filesystem**: 通过 `chroot` 和独立的 Mount Namespace 实现。
+**仓库地址**: [https://github.com/star5o/vme50_container](https://github.com/star5o/vme50_container)
 
-sudo apt update && sudo apt install golang-go -y
+## 功能特性
 
+*   使用 Linux 命名空间 (PID, UTS, IPC, Mount) 提供进程隔离。
+*   使用 Cgroups v2 限制容器的资源使用（CPU 权重、内存上限）。
+*   使用 `chroot` 提供基础的文件系统隔离。
+*   提供简单的命令行接口 (`run` 命令) 来启动容器。
 
+## 环境要求
 
-## 编译
+*   **操作系统**: Linux (已在 Ubuntu 24.04 测试，理论上支持 Cgroups v2 和必要命名空间的较新内核均可)。
+*   **Go 环境**: 需要安装 Go 语言开发环境 (建议 1.18 或更高版本)。如果您尚未安装，请访问 [Go 官方网站](https://golang.org/doc/install) 查看安装指南。
+    *   通过包管理器安装（如 `sudo apt install golang-go`）通常也是可以的。建议通过运行 `go version` 检查安装的版本是否满足要求。
+*   **Root 权限**: 本程序需要以 `root` 用户身份运行，因为它需要执行创建命名空间、配置 Cgroups 和 `chroot` 等特权操作。
+
+## 编译指南
+
+假设您已经克隆了本仓库，并且位于项目根目录 (`~/software/vme50_container`) 下。
+
+1.  **初始化 Go Module (如果尚未完成)**:
+    如果项目还没有 `go.mod` 文件，您可能需要初始化它（通常仓库里应该包含了）。如果需要手动初始化，可以在项目根目录运行：
+    ```bash
+    # 确认模块路径与 go.mod 文件中的一致 (例如 github.com/star5o/vme50_container)
+    # 如果 go.mod 文件已存在，通常只需要运行 go mod tidy
+    # go mod init github.com/star5o/vme50_container # 仅在没有 go.mod 时运行
+    go mod tidy # 下载或更新依赖 (如 cobra, uuid)
+    ```
+    *注意*: 即使通过 `apt` 安装，Go 1.11 及以后版本默认启用 Go Modules 支持。推荐使用此模式。
+
+2.  **编译程序**:
+    在项目根目录下运行以下命令进行编译：
+    ```bash
+    # -o 指定输出的可执行文件名
+    go build -o vme50-container .
+    ```
+    编译成功后，您会在当前目录 (`~/software/vme50_container`) 下看到一个名为 `vme50-container` 的可执行文件。
+
+## 准备容器根文件系统 (Rootfs)
+
+为了运行容器，您需要一个包含基本 Linux 环境的文件系统目录。一个简单的方法是使用 `busybox`。
+
+1.  **使用 Docker 导出 Busybox (推荐)**:
+    如果您安装了 Docker，这是最简单的方式：
+    ```bash
+    # 拉取 busybox 镜像
+    docker pull busybox:latest
+
+    # 创建一个 busybox 容器但不启动
+    docker create --name temp-busybox busybox:latest
+
+    # 从容器中导出文件系统到 ~/rootfs 目录
+    # 确保 ~/rootfs 目录事先不存在或为空
+    mkdir ~/rootfs
+    docker export temp-busybox | tar -C ~/rootfs -xf -
+
+    # 删除临时容器
+    docker rm temp-busybox
+
+    # 检查导出的文件系统
+    ls ~/rootfs
+    ```
+    现在 `~/rootfs` 目录就包含了运行基本命令所需的文件。
+
+2.  **手动准备 (备选)**:
+    您也可以手动下载 Busybox 二进制文件，并创建一个包含必要目录（如 `/bin`, `/proc`, `/dev`, `/etc`, `/tmp` 等）的目录结构。确保将 Busybox 可执行文件放在 `/bin` 下，并创建指向它的常用命令符号链接（如 `sh`, `ls`, `echo` 等）。`/proc` 目录必须存在，容器启动时会挂载它。
+
+## 运行容器
+
+**必须使用 `sudo` 或以 `root` 用户身份运行！**
+
+假设：
+*   您位于项目根目录 `~/software/vme50_container`。
+*   `vme50-container` 可执行文件在此目录中。
+*   您的根文件系统位于 `~/rootfs`。
+
+**基本运行示例 (启动一个 shell)**:
 
 ```bash
-go build .
+sudo ./vme50-container run --rootfs ~/rootfs /bin/sh
 ```
 
-这将生成一个名为 `mydocker` 的可执行文件。
+这将在一个新的容器环境中启动一个交互式 shell。您可以在这个 shell 中运行 Busybox 提供的命令（如 `ls /`, `pwd`, `echo hello`, `ps aux`）。输入 `exit` 退出容器。
 
-## 准备 Rootfs (根文件系统)
-
-容器需要一个根文件系统目录，其中包含它需要运行的命令和库。一个简单的方法是使用 Docker 导出 `busybox` 镜像的文件系统：
+**带资源限制和主机名运行**:
 
 ```bash
-# 1. 创建一个临时的 busybox 容器
-CID=$(docker create busybox)
-
-# 2. 将容器的文件系统导出到一个 tar 文件
-docker export $CID > busybox.tar
-
-# 3. 创建一个目录并解压 tar 文件
-mkdir rootfs
-tar -xf busybox.tar -C rootfs
-
-# 4. （可选）清理临时容器和 tar 文件
-docker rm $CID
-rm busybox.tar
+# 限制内存为 128MB，CPU 权重为 500，设置主机名为 my-container
+sudo ./vme50-container run \
+  --rootfs ~/rootfs \
+  --memory-limit "128M" \
+  --cpu-shares 500 \
+  --hostname my-container \
+  /bin/sh -c "echo 'Inside container!' ; hostname ; echo 'My PID is $$' ; ps aux ; sleep 10"
 ```
 
-现在，`./rootfs` 目录就可以用作 `mydocker` 的根文件系统了。
+**命令行参数说明**:
 
-## 运行
+*   `run`: 子命令，表示要运行一个新容器。
+*   `--rootfs <path>`: **必需**。指定容器使用的根文件系统目录路径。
+*   `--memory-limit <limit>`: (可选) 设置容器的内存上限 (e.g., "64M", "1G")。
+*   `--cpu-shares <value>`: (可选) 设置容器的 CPU 权重 (Cgroup v2 `cpu.weight`，范围 1-10000，相对于其他容器)。
+*   `--hostname <name>`: (可选) 设置容器的主机名。
+*   `[command] [args...]`: **必需**。在容器内要执行的命令及其参数。**重要提示**: 当前实现要求命令使用绝对路径 (如 `/bin/sh`) 或相对于根文件系统根目录的路径 (如 `bin/sh`)。
 
-由于需要创建命名空间和配置 Cgroups，程序必须以 **root** 权限运行。
+## 重要提示与限制
 
-```bash
-# 语法:
-sudo ./mydocker -rootfs <path_to_rootfs> [-mem <limit>] [-cpu <limit>] -cmd "<command_and_args>"
+*   **必须以 Root 身份运行**: 这是 Linux 内核功能的要求。
+*   **Cgroups v2**: 当前实现主要针对 Cgroups v2。如果您的系统使用 Cgroups v1，Cgroup 相关功能可能无法正常工作。
+*   **网络隔离**: 默认情况下，容器共享主机的网络栈。尚未实现网络命名空间隔离。
+*   **用户隔离**: 容器内的进程以 root 用户运行（除非基础镜像配置了非 root 用户）。尚未实现用户命名空间隔离。
+*   **文件系统**: 使用基础的 `chroot`。未实现 OverlayFS 等分层文件系统。
+*   **命令路径**: 容器内执行命令时，目前没有完整的 PATH 查找，需要提供相对根目录或绝对路径。
+*   **挂载点**: 只挂载了 `/proc`。`/dev`, `/sys` 等可能需要手动挂载（未来可改进）。
 
-# 示例 1: 在容器中运行 /bin/sh
-sudo ./mydocker -rootfs ./rootfs -cmd "/bin/sh"
-
-# 示例 2: 查看容器内的主机名 (应为 mydocker-container)
-sudo ./mydocker -rootfs ./rootfs -cmd "hostname"
-
-# 示例 3: 查看容器内的进程列表 (PID 应该从 1 开始)
-sudo ./mydocker -rootfs ./rootfs -cmd "ps aux"
-
-# 示例 4: 设置内存限制为 100MB，并运行一个简单的 shell 命令
-sudo ./mydocker -rootfs ./rootfs -mem 100M -cmd "echo hello from container; sleep 5"
-
-# 示例 5: 设置 CPU 限制为 50%，并运行命令
-# 注意: CPU 限制的效果可能不明显，除非运行 CPU 密集型任务
-sudo ./mydocker -rootfs ./rootfs -cpu 0.5 -cmd "/bin/sh"
-```
-
-## 命令行参数
-
-*   `-rootfs` (string, **必需**): 指向容器根文件系统目录的路径。
-*   `-cmd` (string, **必需**): 要在容器内执行的命令及其参数，用引号括起来。
-*   `-mem` (string, 可选): 内存限制。支持纯数字（字节）或带 `M`/`m` (兆字节), `G`/`g` (吉字节) 后缀。例如: `100M`, `1G`。
-*   `-cpu` (string, 可选): CPU 限制。一个大于 0 的小数，表示 CPU 时间片的比例。例如 `0.5` 表示容器最多使用 50% 的 CPU 时间。
-
-## 实现细节
-
-*   `main.go`: 程序入口，解析命令行参数，创建父进程并使用 `Cloneflags` 启动子进程。
-*   `child.go`: 子进程（容器）的初始化逻辑，在此进程内完成命名空间、Cgroup、文件系统的设置，最后使用 `syscall.Exec` 执行用户命令。
-*   `cgroups.go`: 辅助函数，用于与 Cgroup v2 文件系统 (`/sys/fs/cgroup`) 交互以设置资源限制。
-*   `fs.go`: 辅助函数，用于设置挂载点传播、执行 `chroot`、挂载虚拟文件系统 (`/proc`, `/dev/pts`)。 
