@@ -66,7 +66,7 @@ func ContainerInitProcess(initArgs []string) error {
 
 	hostnameFlagFound := false
 	separatorFound := false
-	for i, arg := range initArgs {
+	for _, arg := range initArgs {
 		if separatorFound {
 			userCmdAndArgs = append(userCmdAndArgs, arg)
 			continue
