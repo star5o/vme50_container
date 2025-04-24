@@ -22,7 +22,7 @@
 
 位于项目根目录 (`vme50_container`) 下。
 
-1.  **初始化 Go Module **:
+1.  **初始化 Go Module**:
     在项目根目录运行：
     ```bash
     go mod init github.com/star5o/vme50_container # go.mod 初始化
